@@ -157,10 +157,9 @@ float calculatePointDistance(Point point1, Point point2) {
     return sqrt(deltaX*deltaX + deltaY*deltaY);
 }
 
+const float MAXIMUM_OFFSET_FACTOR_X = 0.03;
+const float MAXIMUM_OFFSET_FACTOR_Y = 0.03;
 vector<Point> identifyPrimaryObject(vector<vector<Point>> contours) {
-    const float MAXIMUM_OFFSET_FACTOR_X = 0.05;
-    const float MAXIMUM_OFFSET_FACTOR_Y = 0.10;
-
     if (contours.empty()) {
         return vector<Point>();
     }
@@ -174,11 +173,12 @@ vector<Point> identifyPrimaryObject(vector<vector<Point>> contours) {
         // TODO: Filter contours by minimum and maximum height/width relation
 
         vector<Point> biggestObject = contours.at(contours.size() - 1);
-        Point biggestObjectCenter = calculateRectangleCenter(boundingRect(biggestObject));
+        Rect biggestObjectBoundingRectangle = boundingRect(biggestObject);
+        Point biggestObjectCenter = calculateRectangleCenter(biggestObjectBoundingRectangle);
 
-        int framesElapsedSinceLastDetection = stream.get(CAP_PROP_POS_FRAMES) - primaryObjectLastDetectedFrame;
-        int maximumOffsetX = FRAME_WIDTH * MAXIMUM_OFFSET_FACTOR_X * framesElapsedSinceLastDetection;
-        int maximumOffsetY = FRAME_HEIGHT * MAXIMUM_OFFSET_FACTOR_Y * framesElapsedSinceLastDetection;
+        int framesElapsedSinceLastDetection = max(stream.get(CAP_PROP_POS_FRAMES) - primaryObjectLastDetectedFrame, (double)1);
+        int maximumOffsetX = (biggestObjectBoundingRectangle.width / 2) + FRAME_WIDTH * MAXIMUM_OFFSET_FACTOR_X * framesElapsedSinceLastDetection;
+        int maximumOffsetY = (biggestObjectBoundingRectangle.height / 2) + FRAME_HEIGHT * MAXIMUM_OFFSET_FACTOR_Y * framesElapsedSinceLastDetection;
         int offsetX = abs(biggestObjectCenter.x - primaryObjectLastBoundingRectangle.x);
         int offsetY = abs(biggestObjectCenter.y - primaryObjectLastBoundingRectangle.y);
         if (offsetX <= maximumOffsetX && offsetY <= maximumOffsetY) {
@@ -206,12 +206,21 @@ vector<Point> identifyPrimaryObject(vector<vector<Point>> contours) {
     }
 }
 
+void drawPrimaryObjectMaximumOffsetLimits(Mat &outputFrame, int x , int y) {
+    int framesElapsedSinceLastDetection = max(stream.get(CAP_PROP_POS_FRAMES) - primaryObjectLastDetectedFrame, (double)1);
+    int maximumOffsetX = (primaryObjectLastBoundingRectangle.width / 2) + FRAME_WIDTH * MAXIMUM_OFFSET_FACTOR_X * framesElapsedSinceLastDetection;
+    int maximumOffsetY = (primaryObjectLastBoundingRectangle.height / 2) + FRAME_HEIGHT * MAXIMUM_OFFSET_FACTOR_Y * framesElapsedSinceLastDetection;
+
+    drawRectangle(outputFrame, Scalar(0, 0, 0), Rect(x - maximumOffsetX, y - maximumOffsetY, maximumOffsetX * 2, maximumOffsetY * 2));
+}
+
 void trackObjects(Mat frameDifference, Mat &outputFrame) {
     const bool USE_CONTOUR_DETECTION = true;
     const Scalar PRIMARY_OBJECT_TRACKING_COLOR = Scalar(0, 255, 0);
     const Scalar PRIMARY_OBJECT_LOST_COLOR = Scalar(0, 0, 255);
     const Scalar SECONDARY_OBJECTS_TRACKING_COLOR = Scalar(255, 255, 255);
     const bool DRAW_PRIMARY_OBJECT_TRAIL = true;
+    const bool DRAW_PRIMARY_OBJECT_OFFSET_LIMITS = true;
     const bool DRAW_SECONDARY_OBJECT_MARKERS = true;
     const int TEXT_OFFSET_Y = 40;
 
@@ -250,6 +259,10 @@ void trackObjects(Mat frameDifference, Mat &outputFrame) {
 
             drawRectangle(outputFrame, PRIMARY_OBJECT_TRACKING_COLOR, primaryObjectLastBoundingRectangle);
             drawCrosshair(outputFrame, PRIMARY_OBJECT_TRACKING_COLOR, x, y);
+
+            if (DRAW_PRIMARY_OBJECT_OFFSET_LIMITS) {
+                drawPrimaryObjectMaximumOffsetLimits(outputFrame, x , y);
+            }
         }
         else if (primaryObjectLastPosition[0] != -1) {
             int x = primaryObjectLastPosition[0];
