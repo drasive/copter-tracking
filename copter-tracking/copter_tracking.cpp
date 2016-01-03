@@ -5,8 +5,9 @@
 using namespace std;
 using namespace cv;
 
+// Global consts
 //const string FILENAME = "";
-const string FILENAME = "input/video2.mp4";
+const string FILENAME = "input/still_camera_3.mp4";
 const int FRAME_WIDTH = 1920;
 const int FRAME_HEIGHT = 1080;
 const float TRAIL_DURATION = 3.0;
@@ -17,12 +18,17 @@ const string THRESHOLDED_FRAME_WINDOW_NAME = "Thresholded Difference";
 const string BLURRED_FRAME_WINDOW_NAME = "Blurred Difference (Final)";
 const string SETTINGS_WINDOW_NAME = "Settings";
 
-int thresholdSensitivity = 32;
-int blurSize = 20;
+// Settings
 int framerate = 30;
+int thresholdSensitivity = 30;
+int blurSize = 20;
 
-int primaryObjectLastPosition[2] = { 0,0 };
-Rect primaryObjectLastBoundingRectangle = Rect(0, 0, 0, 0);
+// Global variables
+VideoCapture stream;
+
+int primaryObjectLastPosition[2] = { -1, -1 };
+Rect primaryObjectLastBoundingRectangle = Rect(-1, -1, -1, -1);
+int primaryObjectLastDetectedFrame = -1;
 
 
 void createNamedWindow(const string &name) {
@@ -90,15 +96,16 @@ void drawRectangle(Mat &frame, Scalar color, Rect rectangle) {
     cv::rectangle(frame, topLeft, bottomRight, color, LINE_THICKNESS, LINE_TYPE);
 }
 
-void drawText(Mat &frame, Scalar color, int x, int y, string text) {
+void drawText(Mat &frame, Scalar color, int x, int y, string text, int fontScale = 1) {
     const float TEXT_OFFSET_X_FACTOR = 9.0;
     const int FONT_FACE = 1;
-    const int FONT_SCALE = 1;
+    const int FONT_SCALE_FACTOR = 1;
     const int FONT_THICKNESS = 1;
     const int LINE_TYPE = 8;
 
-    putText(frame, text, Point(x - (text.length() / 2 * TEXT_OFFSET_X_FACTOR), y),
-        FONT_FACE, FONT_SCALE, color, FONT_THICKNESS, LINE_TYPE);
+    fontScale = fontScale * FONT_SCALE_FACTOR;
+    putText(frame, text, Point(x - (text.length() * fontScale / 2 * TEXT_OFFSET_X_FACTOR), y),
+        FONT_FACE, fontScale, color, FONT_THICKNESS, LINE_TYPE);
 }
 
 void drawTrail(Mat &frame, Scalar color, vector<pair<int, int>> points) {
@@ -119,24 +126,78 @@ void drawTrail(Mat &frame, Scalar color, vector<pair<int, int>> points) {
     }
 }
 
+Point calculateRectangleCenter(Rect rectangle) {
+    return Point(
+        rectangle.x + rectangle.width / 2,
+        rectangle.y + rectangle.height / 2);
+}
+
+float calculatePointDistance(Point point1, Point point2) {
+    int deltaX = point2.x - point1.x;
+    int deltaY = point2.y - point1.y;
+
+    return sqrt(deltaX*deltaX + deltaY*deltaY);
+}
+
 vector<Point> identifyPrimaryObject(vector<vector<Point>> contours) {
+    const float MAXIMUM_OFFSET_FACTOR_X = 0.05;
+    const float MAXIMUM_OFFSET_FACTOR_Y = 0.10;
+
     if (contours.empty()) {
         return vector<Point>();
     }
 
-    //the largest contour is found at the end of the contours vector
-    //we will simply assume that the biggest contour is the object we are looking for.
-    return contours.at(contours.size() - 1);
+    if (primaryObjectLastPosition[0] == -1) {
+        // Just start off with the biggest object
+        return contours.at(contours.size() - 1);
+    }
+    else {
+        // TODO: Filter contours by minimum and maximum area
+        // TODO: Filter contours by minimum and maximum height/width relation
+
+        vector<Point> biggestObject = contours.at(contours.size() - 1);
+        Point biggestObjectCenter = calculateRectangleCenter(boundingRect(biggestObject));
+
+        int framesElapsedSinceLastDetection = stream.get(CAP_PROP_POS_FRAMES) - primaryObjectLastDetectedFrame;
+        int maximumOffsetX = FRAME_WIDTH * MAXIMUM_OFFSET_FACTOR_X * framesElapsedSinceLastDetection;
+        int maximumOffsetY = FRAME_HEIGHT * MAXIMUM_OFFSET_FACTOR_Y * framesElapsedSinceLastDetection;
+        int offsetX = abs(biggestObjectCenter.x - primaryObjectLastBoundingRectangle.x);
+        int offsetY = abs(biggestObjectCenter.y - primaryObjectLastBoundingRectangle.y);
+        if (offsetX <= maximumOffsetX && offsetY <= maximumOffsetY) {
+            // Assume biggest object is primary object
+            return biggestObject;
+        }
+        else {
+            // Assume object nearest to last position of primary object is still primary object
+            cout << "PRIMARY OBJECT NEAREST" << endl;
+
+            Point primaryObjectLastCenter = calculateRectangleCenter(primaryObjectLastBoundingRectangle);
+            float minimumDistance = UINT32_MAX;
+            vector<Point> nearestObject;
+            for (auto &contour : contours) {
+                Point contourCenter = calculateRectangleCenter(boundingRect(contour));
+
+                if (calculatePointDistance(contourCenter, primaryObjectLastCenter) < minimumDistance) {
+                    minimumDistance = calculatePointDistance(contourCenter, primaryObjectLastCenter);
+                    nearestObject = contour;
+                }
+            }
+
+            return nearestObject;
+        }
+    }
 }
 
 void trackObjects(Mat frameDifference, Mat &outputFrame) {
+    const bool USE_CONTOUR_DETECTION = true;
     const Scalar PRIMARY_OBJECT_TRACKING_COLOR = Scalar(0, 255, 0);
     const Scalar PRIMARY_OBJECT_LOST_COLOR = Scalar(0, 0, 255);
     const Scalar SECONDARY_OBJECTS_TRACKING_COLOR = Scalar(255, 255, 255);
     const bool DRAW_SECONDARY_OBJECT_MARKERS = true;
-    const int TEXT_OFFSET_Y = 50;
+    const int TEXT_OFFSET_Y = 40;
 
-    if (true) { // Using contour detection
+    if (USE_CONTOUR_DETECTION) {
+        // Using contour detection
         // TODO: Add and test PROCESSING_RESOLUTION_FACTOR
 
         // Detect contours
@@ -160,11 +221,11 @@ void trackObjects(Mat frameDifference, Mat &outputFrame) {
         // Draw primary object marker
         if (!primaryObject.empty()) {
             primaryObjectLastBoundingRectangle = boundingRect(primaryObject);
+            primaryObjectLastDetectedFrame = stream.get(CAP_PROP_POS_FRAMES);
 
-            primaryObjectLastPosition[0] = primaryObjectLastBoundingRectangle.x + primaryObjectLastBoundingRectangle.width / 2;
-            primaryObjectLastPosition[1] = primaryObjectLastBoundingRectangle.y + primaryObjectLastBoundingRectangle.height / 2;
-            int x = primaryObjectLastPosition[0];
-            int y = primaryObjectLastPosition[1];
+            Point primaryObjectCenter = calculateRectangleCenter(primaryObjectLastBoundingRectangle);
+            int x = primaryObjectLastPosition[0] = primaryObjectCenter.x;
+            int y = primaryObjectLastPosition[1] = primaryObjectCenter.y;
 
             drawRectangle(outputFrame, PRIMARY_OBJECT_TRACKING_COLOR, primaryObjectLastBoundingRectangle);
             drawCrosshair(outputFrame, PRIMARY_OBJECT_TRACKING_COLOR, x, y);
@@ -179,7 +240,8 @@ void trackObjects(Mat frameDifference, Mat &outputFrame) {
             drawCrosshair(outputFrame, PRIMARY_OBJECT_LOST_COLOR, x, y);
         }
     }
-    else { // Using blob detection
+    else {
+        // Using blob detection
         const float PROCESSING_RESOLUTION_FACTOR = 0.2;
 
         // Setup blob detection parameters
@@ -188,15 +250,15 @@ void trackObjects(Mat frameDifference, Mat &outputFrame) {
         params.filterByColor = false;
 
         params.filterByArea = true;
-        params.minArea = 25.0f;
-        params.maxArea = 400.0f;
+        params.minArea = 10.0f;
+        params.maxArea = 200.0f;
 
         params.filterByCircularity = true;
-        params.minCircularity = 0.4;
-        params.maxCircularity = 1.0;
+        params.minCircularity = 0.20;
+        params.maxCircularity = 0.70;
 
         params.filterByInertia = true;
-        params.minInertiaRatio = 0.25;
+        params.minInertiaRatio = 0.20;
         params.maxInertiaRatio = 0.75;
 
         params.minDistBetweenBlobs = 20.0f;
@@ -231,7 +293,6 @@ int main() {
     bool debugMode = false;
     bool pause = false;
 
-    VideoCapture stream;
     Mat currentFrame, nextFrame;
     Mat currentFrameGrayscale, nextFrameGrayscale;
     Mat frameDifference;
@@ -263,6 +324,12 @@ int main() {
             cout << "Error acquiring video stream (" + streamSource + ")\n";
             return -1;
         }
+
+        // Reset object tracking
+        primaryObjectLastPosition[0] = -1;
+        primaryObjectLastPosition[1] = -1;
+        primaryObjectLastBoundingRectangle = Rect(-1, -1, -1, -1);
+        primaryObjectLastDetectedFrame = -1;
 
 
         // Analyze frames
