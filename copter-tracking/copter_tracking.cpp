@@ -8,10 +8,10 @@ using namespace cv;
 
 // Global consts
 //const string FILENAME = "";
-const string FILENAME = "input/still_camera_3.mp4";
+const string FILENAME = "input/still_camera_1.mp4";
 const int FRAME_WIDTH = 1920;
 const int FRAME_HEIGHT = 1080;
-const float TRAIL_DURATION = 3.0;
+const float TRAIL_DURATION = 0.8;
 
 const string RAW_FRAME_WINDOW_NAME = "Raw Input";
 const string DIFFERENCE_FRAME_WINDOW_NAME = "Raw Difference";
@@ -25,11 +25,13 @@ int thresholdSensitivity = 30;
 int blurSize = 20;
 
 // Global variables
+bool debugMode = false;
 VideoCapture stream;
 
 int primaryObjectLastPosition[2] = { -1, -1 };
 Rect primaryObjectLastBoundingRectangle = Rect(-1, -1, -1, -1);
 int primaryObjectLastDetectedFrame = -1;
+vector<Point> trail = vector<Point>();
 
 
 void createNamedWindow(const string &name) {
@@ -109,21 +111,36 @@ void drawText(Mat &frame, Scalar color, int x, int y, string text, int fontScale
         FONT_FACE, fontScale, color, FONT_THICKNESS, LINE_TYPE);
 }
 
-void drawTrail(Mat &frame, Scalar color, vector<pair<int, int>> points) {
+void drawTrail(Mat &frame, Scalar color) {
     const int MINIMUM_THICKNESS = 1;
-    const int MAXIMUM_THICKNESS = 3;
+    const int MAXIMUM_THICKNESS = 2;
     const int LINE_TYPE = 8;
 
-    for (int pointIndex = 0; pointIndex < points.size() - 2; pointIndex++) {
-        if (points[pointIndex].first == -1 || points[pointIndex + 1].first == -1) {
+    if (trail.size() < 2) {
+        return;
+    }
+
+    for (int pointIndex = 0; pointIndex < trail.size() - 2; pointIndex++) {
+        if (trail[pointIndex].x == -1 || trail[pointIndex + 1].x == -1) {
             break;
         }
 
-        Point startingPoint = Point(points[pointIndex].first, points[pointIndex].second);
-        Point endPoint = Point(points[pointIndex + 1].first, points[pointIndex + 1].second);
-        int thickness = round(MINIMUM_THICKNESS + (MAXIMUM_THICKNESS - MINIMUM_THICKNESS) / (points.size() - 1) * pointIndex); // Linear progression
+        Point startingPoint = Point(trail[pointIndex].x, trail[pointIndex].y);
+        Point endPoint = Point(trail[pointIndex + 1].x, trail[pointIndex + 1].y);
+        float maximumTrailLength = framerate * TRAIL_DURATION;
+        // TODO: Fix when framerate changes (pointIndex seems to be the problem)
+        int thickness = round(MINIMUM_THICKNESS + (MAXIMUM_THICKNESS - MINIMUM_THICKNESS) / (maximumTrailLength) * pointIndex); // Linear progression
 
         line(frame, startingPoint, endPoint, color, thickness, LINE_TYPE);
+    }
+}
+
+void addTrailPoint(Point point) {
+    trail.push_back(point);
+
+    int maximumTrailLength = framerate * TRAIL_DURATION;
+    if (trail.size() > maximumTrailLength) {
+        trail.erase(trail.begin(), trail.begin() + 1);
     }
 }
 
@@ -170,7 +187,7 @@ vector<Point> identifyPrimaryObject(vector<vector<Point>> contours) {
         }
         else {
             // Assume object nearest to last position of primary object is still primary object
-            cout << "PRIMARY OBJECT NEAREST" << endl;
+            cout << "Warning: Assuming primary object is nearest to last position (not largest)" << endl;
 
             Point primaryObjectLastCenter = calculateRectangleCenter(primaryObjectLastBoundingRectangle);
             float minimumDistance = UINT32_MAX;
@@ -194,6 +211,7 @@ void trackObjects(Mat frameDifference, Mat &outputFrame) {
     const Scalar PRIMARY_OBJECT_TRACKING_COLOR = Scalar(0, 255, 0);
     const Scalar PRIMARY_OBJECT_LOST_COLOR = Scalar(0, 0, 255);
     const Scalar SECONDARY_OBJECTS_TRACKING_COLOR = Scalar(255, 255, 255);
+    const bool DRAW_PRIMARY_OBJECT_TRAIL = true;
     const bool DRAW_SECONDARY_OBJECT_MARKERS = true;
     const int TEXT_OFFSET_Y = 40;
 
@@ -228,6 +246,8 @@ void trackObjects(Mat frameDifference, Mat &outputFrame) {
             int x = primaryObjectLastPosition[0] = primaryObjectCenter.x;
             int y = primaryObjectLastPosition[1] = primaryObjectCenter.y;
 
+            addTrailPoint(Point(x, y));
+
             drawRectangle(outputFrame, PRIMARY_OBJECT_TRACKING_COLOR, primaryObjectLastBoundingRectangle);
             drawCrosshair(outputFrame, PRIMARY_OBJECT_TRACKING_COLOR, x, y);
         }
@@ -239,6 +259,10 @@ void trackObjects(Mat frameDifference, Mat &outputFrame) {
 
             drawRectangle(outputFrame, PRIMARY_OBJECT_LOST_COLOR, primaryObjectLastBoundingRectangle);
             drawCrosshair(outputFrame, PRIMARY_OBJECT_LOST_COLOR, x, y);
+        }
+
+        if (DRAW_PRIMARY_OBJECT_TRAIL) {
+            drawTrail(outputFrame, PRIMARY_OBJECT_TRACKING_COLOR);
         }
     }
     else {
@@ -291,7 +315,6 @@ void trackObjects(Mat frameDifference, Mat &outputFrame) {
 
 int main() {
     bool trackingEnabled = true;
-    bool debugMode = false;
     bool pause = false;
 
     Mat currentFrame, nextFrame;
@@ -331,6 +354,7 @@ int main() {
         primaryObjectLastPosition[1] = -1;
         primaryObjectLastBoundingRectangle = Rect(-1, -1, -1, -1);
         primaryObjectLastDetectedFrame = -1;
+        trail = vector<Point>();
 
 
         // Analyze frames
