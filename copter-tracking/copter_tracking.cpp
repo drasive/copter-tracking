@@ -1,3 +1,4 @@
+#include <chrono>
 #include <opencv2/opencv.hpp>
 #include <opencv2/highgui/highgui.hpp>
 
@@ -334,6 +335,8 @@ int main() {
 
         // Analyze frames
         while (liveStream || stream.get(CV_CAP_PROP_POS_FRAMES) < stream.get(CV_CAP_PROP_FRAME_COUNT) - 1) {
+            chrono::high_resolution_clock::time_point frameProcessingStartTime = chrono::high_resolution_clock::now();
+
             // Get current frame as grayscale
             stream.read(currentFrame);
             cvtColor(currentFrame, currentFrameGrayscale, COLOR_BGR2GRAY);
@@ -363,8 +366,21 @@ int main() {
             }
 
 
+            // Calculate wait time
+            auto frameProcessingDuration = chrono::duration_cast<chrono::milliseconds>(
+                chrono::high_resolution_clock::now() - frameProcessingStartTime).count();
+
+            // TODO: Reuse second frame as first frame next time
+            int waitTime = 2 * 1000 / framerate - frameProcessingDuration;
+            if (waitTime <= 0) {
+                drawText(currentFrame, Scalar(0, 0, 255), FRAME_WIDTH / 2, 40,
+                    "PROCESSING DELAY (" + to_string(-waitTime) + "ms)", 2);
+                waitTime = 1;
+            }
+
             // Display output
             createNamedWindow(RAW_FRAME_WINDOW_NAME);
+            //resizeWindow(name, 1280, 960);
             imshow(RAW_FRAME_WINDOW_NAME, currentFrame);
 
             if (debugMode) {
@@ -382,14 +398,12 @@ int main() {
                 destroyWindow(BLURRED_FRAME_WINDOW_NAME);
             }
 
-
             // Check for user input
             const int EXIT_KEY = 27; // "Esc" key
             const int TOGGLE_TRACKING_KEY = 't';
             const int TOGGLE_DEBUG_MODE_KEY = 'd';
             const int TOGGLE_PAUSE_KEY = 'p';
 
-            int waitTime = 1000 / framerate;
             switch (waitKey(waitTime)) {
             case EXIT_KEY:
                 return 0;
