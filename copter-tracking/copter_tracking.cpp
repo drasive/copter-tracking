@@ -157,9 +157,25 @@ float calculatePointDistance(Point point1, Point point2) {
     return sqrt(deltaX*deltaX + deltaY*deltaY);
 }
 
-const float MAXIMUM_OFFSET_FACTOR_X = 0.03;
-const float MAXIMUM_OFFSET_FACTOR_Y = 0.03;
+const float MAXIMUM_OFFSET_FACTOR_X = 0.02;
+const float MAXIMUM_OFFSET_FACTOR_Y = 0.02;
+
+bool obeysOffsetLimits(Rect objectBoundingRectangle) {
+    int framesElapsedSinceLastDetection = max(stream.get(CAP_PROP_POS_FRAMES) - primaryObjectLastDetectedFrame, (double)1);
+    int maximumOffsetX = FRAME_WIDTH_CROPPED * MAXIMUM_OFFSET_FACTOR_X * framesElapsedSinceLastDetection;
+    int maximumOffsetY = FRAME_HEIGHT_CROPPED * MAXIMUM_OFFSET_FACTOR_Y * framesElapsedSinceLastDetection;
+
+    auto primaryObjectCenter = calculateRectangleCenter(primaryObjectLastBoundingRectangle);
+    auto objectCenter = calculateRectangleCenter(objectBoundingRectangle);
+    int offsetX = abs(objectCenter.x - primaryObjectCenter.x);
+    int offsetY = abs(objectCenter.y - primaryObjectCenter.y);
+
+    return offsetX <= maximumOffsetX && offsetY <= maximumOffsetY;
+}
+
 vector<Point> identifyPrimaryObject(vector<vector<Point>> contours) {
+    const float MAXMIMUM_OFFSET_LIMIT_DURATION = 1.0;
+
     if (contours.empty()) {
         return vector<Point>();
     }
@@ -174,14 +190,8 @@ vector<Point> identifyPrimaryObject(vector<vector<Point>> contours) {
 
         vector<Point> biggestObject = contours.at(contours.size() - 1);
         Rect biggestObjectBoundingRectangle = boundingRect(biggestObject);
-        Point biggestObjectCenter = calculateRectangleCenter(biggestObjectBoundingRectangle);
 
-        int framesElapsedSinceLastDetection = max(stream.get(CAP_PROP_POS_FRAMES) - primaryObjectLastDetectedFrame, (double)1);
-        int maximumOffsetX = (biggestObjectBoundingRectangle.width / 2) + FRAME_WIDTH * MAXIMUM_OFFSET_FACTOR_X * framesElapsedSinceLastDetection;
-        int maximumOffsetY = (biggestObjectBoundingRectangle.height / 2) + FRAME_HEIGHT * MAXIMUM_OFFSET_FACTOR_Y * framesElapsedSinceLastDetection;
-        int offsetX = abs(biggestObjectCenter.x - primaryObjectLastBoundingRectangle.x);
-        int offsetY = abs(biggestObjectCenter.y - primaryObjectLastBoundingRectangle.y);
-        if (offsetX <= maximumOffsetX && offsetY <= maximumOffsetY) {
+        if (obeysOffsetLimits(biggestObjectBoundingRectangle)) {
             // Assume biggest object is primary object
             return biggestObject;
         }
@@ -201,15 +211,28 @@ vector<Point> identifyPrimaryObject(vector<vector<Point>> contours) {
                 }
             }
 
-            return nearestObject;
+            // Make sure nearest object doesn't violate maximum offset limits
+            Rect nearestObjectBoundingRectangle = boundingRect(nearestObject);
+            int framesElapsedSinceLastDetection = max(stream.get(CAP_PROP_POS_FRAMES) - primaryObjectLastDetectedFrame, (double)1);
+
+            if (obeysOffsetLimits(nearestObjectBoundingRectangle) || framesElapsedSinceLastDetection > framerate * MAXMIMUM_OFFSET_LIMIT_DURATION) {
+                return nearestObject;
+            }
+
+            return vector<Point>();
         }
     }
 }
 
 void drawPrimaryObjectMaximumOffsetLimits(Mat &outputFrame, int x , int y) {
     int framesElapsedSinceLastDetection = max(stream.get(CAP_PROP_POS_FRAMES) - primaryObjectLastDetectedFrame, (double)1);
-    int maximumOffsetX = (primaryObjectLastBoundingRectangle.width / 2) + FRAME_WIDTH * MAXIMUM_OFFSET_FACTOR_X * framesElapsedSinceLastDetection;
-    int maximumOffsetY = (primaryObjectLastBoundingRectangle.height / 2) + FRAME_HEIGHT * MAXIMUM_OFFSET_FACTOR_Y * framesElapsedSinceLastDetection;
+    int maximumOffsetX = FRAME_WIDTH_CROPPED * MAXIMUM_OFFSET_FACTOR_X * framesElapsedSinceLastDetection;
+    int maximumOffsetY = FRAME_HEIGHT_CROPPED * MAXIMUM_OFFSET_FACTOR_Y * framesElapsedSinceLastDetection;
+
+    auto primaryObjectCenter = calculateRectangleCenter(primaryObjectLastBoundingRectangle);
+    auto objectCenter = calculateRectangleCenter(primaryObjectLastBoundingRectangle);
+    int offsetX = abs(objectCenter.x - primaryObjectCenter.x);
+    int offsetY = abs(objectCenter.y - primaryObjectCenter.y);
 
     drawRectangle(outputFrame, Scalar(0, 0, 0), Rect(x - maximumOffsetX, y - maximumOffsetY, maximumOffsetX * 2, maximumOffsetY * 2));
 }
