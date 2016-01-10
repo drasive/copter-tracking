@@ -146,10 +146,20 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="copter_tracking.cpp" />
+    <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="packages.config" />
+    <ClCompile Include="src\movement_tracker.cpp" />
+    <ClCompile Include="src\moving_object_detector.cpp" />
+    <ClCompile Include="src\moving_object_tracker.cpp" />
+    <ClCompile Include="src\open_cv_helper.cpp" />
+    <ClCompile Include="src\trail.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="src\moving_object_detector.h" />
+    <ClInclude Include="src\moving_object_tracker.h" />
+    <ClInclude Include="src\open_cv_helper.h" />
+    <ClInclude Include="src\trail.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
