@@ -52,8 +52,6 @@ void createSettingsWindow() {
     setTrackbarMin("Framerate", SETTINGS_WINDOW_NAME, 1);
 }
 
-
-
 void drawObjectMarkers(Mat &outputFrame, vector<vector<Point>> objects, MovingObjectTracker primaryObjectTracker) {
     const Scalar PRIMARY_OBJECT_DETECTED_MARKER_COLOR = Scalar(0, 255, 0);
     const Scalar PRIMARY_OBJECT_NOT_DETECTED_MARKER_COLOR = Scalar(0, 0, 255);
@@ -242,10 +240,10 @@ int main(int argc, char* argv[]) {
                 }
             }
 
-            // Draw stuff
+            // Draw
+            OpenCvHelper::drawStreamInfo(currentFrame, stream);
             drawObjectMarkers(currentFrame, objects, objectTracker);
-
-
+            
             // Calculate wait time
             auto frameProcessingDuration = chrono::duration_cast<chrono::milliseconds>(
                 chrono::high_resolution_clock::now() - frameProcessingStartTime).count();

@@ -8,6 +8,15 @@ using namespace std;
 using namespace cv;
 
 
+Point OpenCvHelper::calculateLinePosition(int lineIndex) {
+    const int MARGIN_TOP = 30;
+    const int MARGIN_LEFT = 5;
+    const int LINE_HEIGHT = 30;
+
+    return Point(MARGIN_LEFT, MARGIN_TOP + (LINE_HEIGHT * (lineIndex - 1)));
+}
+
+
 void OpenCvHelper::drawRectangle(Mat &image, Scalar color, Rect rectangle)
 {
     const int LINE_THICKNESS = 1;
@@ -62,16 +71,24 @@ void OpenCvHelper::drawCrosshair(Mat &target, Scalar color, Point location)
     }
 }
 
-void OpenCvHelper::drawText(Mat &image, Scalar color, Point location, string text, int fontScale)
+void OpenCvHelper::drawText(Mat &image, Scalar color, Point location, string text, int fontScale, bool centerHorizontal)
 {
-    const float TEXT_OFFSET_X_FACTOR = 9.0;
+    const float TEXT_CENTER_HORIZONTAL_FACTOR = 9.0;
     const int FONT_FACE = 1;
     const int FONT_SCALE_FACTOR = 1;
     const int FONT_THICKNESS = 1;
     const int LINE_TYPE = 8;
 
+    int positionX;
+    if (centerHorizontal) {
+        positionX = location.x - (text.length() * fontScale / 2 * TEXT_CENTER_HORIZONTAL_FACTOR);
+    }
+    else {
+        positionX = location.x;
+    }
+
     fontScale = fontScale * FONT_SCALE_FACTOR;
-    putText(image, text, Point(location.x - (text.length() * fontScale / 2 * TEXT_OFFSET_X_FACTOR), location.y),
+    putText(image, text, Point(positionX, location.y),
         FONT_FACE, fontScale, color, FONT_THICKNESS, LINE_TYPE);
 }
 
@@ -99,6 +116,22 @@ void OpenCvHelper::drawTrail(cv::Mat &image, cv::Scalar color, Trail trail)
 
         line(image, startPoint, endPoint, color, thickness, LINE_TYPE);
     }
+}
+
+void OpenCvHelper::drawStreamInfo(Mat &outputFrame, VideoCapture stream) {
+    const string TIME_FORMAT = "";
+    const Scalar FONT_COLOR = Scalar(255, 255, 255);
+    const int FONT_SCALE = 2;
+
+    int currentFrame = (int)stream.get(CV_CAP_PROP_POS_FRAMES);
+    int totalFrames = (int)stream.get(CV_CAP_PROP_FRAME_COUNT);
+    // TODO: Format time
+    int currentTime = currentFrame / stream.get(CV_CAP_PROP_FPS);
+    int totalTime = totalFrames / stream.get(CV_CAP_PROP_FPS);
+
+    OpenCvHelper::drawText(outputFrame, FONT_COLOR, calculateLinePosition(1),
+        to_string(currentTime) + "/" + to_string(totalTime) + " (" + to_string(currentFrame) + "/" + to_string(totalFrames) + ")",
+        FONT_SCALE, false);
 }
 
 
