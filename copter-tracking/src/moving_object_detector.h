@@ -7,5 +7,11 @@
 class MovingObjectDetector
 {
 public:
-    static std::vector<std::vector<cv::Point>> detect(cv::Mat &frameDifference);
+    bool filterByArea;
+    int minArea;
+    int maxArea;
+
+    MovingObjectDetector();
+
+    std::vector<std::vector<cv::Point>> detect(cv::Mat &frameDifference);
 };

@@ -9,10 +9,17 @@ using namespace std;
 using namespace cv;
 
 
+MovingObjectDetector::MovingObjectDetector()
+{
+    MovingObjectDetector::filterByArea = false;
+    MovingObjectDetector::minArea = 0;
+    MovingObjectDetector::maxArea = INT32_MAX;
+}
+
+
 vector<vector<Point>> MovingObjectDetector::detect(cv::Mat &frameDifference)
 {
-    // Using contour detection
-    // TODO: Add and test PROCESSING_RESOLUTION_FACTOR. Outsource into class (downscaling image, calling processing method, upscaling result)
+    // Detect contours
     Mat frameDifferenceCopy;
     frameDifference.copyTo(frameDifferenceCopy);
     vector<vector<Point>> contours;
@@ -20,8 +27,15 @@ vector<vector<Point>> MovingObjectDetector::detect(cv::Mat &frameDifference)
 
     findContours(frameDifferenceCopy, contours, hierarchy, CV_RETR_EXTERNAL, CV_CHAIN_APPROX_SIMPLE);
 
-    // TODO: Filter contours by minimum and maximum area
-    // TODO: Filter contours by minimum and maximum height/width relation
+    // Filter contours by area
+    vector<vector<Point>> contoursFiltered;
+    for (auto &contour : contours) {
+        float contourArea = cv::contourArea(contour);
+        if (!MovingObjectDetector::filterByArea ||
+            (contourArea >= MovingObjectDetector::minArea && contourArea <= MovingObjectDetector::maxArea)) {
+            contoursFiltered.push_back(contour);
+        }
+    }
 
-    return contours;
+    return contoursFiltered;
 }

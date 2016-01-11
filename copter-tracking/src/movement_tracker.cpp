@@ -129,7 +129,12 @@ void drawObjectMarkers(Mat &outputFrame, vector<vector<Point>> objects, MovingOb
 }
 
 
-int main() {
+int main(int argc, char* argv[]) {
+    const int MINIMUM_CONTOUR_AREA = 400;
+    const int MAXIMUM_CONTOUR_AREA = 50000;
+    const int MAXIMUM_OFFSET_X = 20;
+    const int MAXIMUM_OFFSET_Y = 20;
+
     bool trackingEnabled = true;
     bool pause = false;
 
@@ -140,6 +145,10 @@ int main() {
     Mat frameDifferenceBlurred;
 
     MovingObjectDetector objectDetector = MovingObjectDetector();
+    objectDetector.filterByArea = true;
+    objectDetector.minArea = MINIMUM_CONTOUR_AREA;
+    objectDetector.maxArea = MAXIMUM_CONTOUR_AREA;
+
     MovingObjectTracker objectTracker = MovingObjectTracker();
 
     createSettingsWindow();
@@ -181,10 +190,10 @@ int main() {
 
             // Get current frame as grayscale
             stream.read(currentFrame);
-            cvtColor(currentFrame, currentFrameGrayscale, COLOR_BGR2GRAY);
-
-            // Get next frame as grayscale
             stream.read(nextFrame);
+
+            // Convert to grayscale
+            cvtColor(currentFrame, currentFrameGrayscale, COLOR_BGR2GRAY);
             cvtColor(nextFrame, nextFrameGrayscale, COLOR_BGR2GRAY);
 
             // Get difference between current and next frame
