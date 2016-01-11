@@ -13,7 +13,7 @@ using namespace cv;
 
 // Global consts
 //const string FILENAME = "";
-const string FILENAME = "data/still_camera_2.mp4";
+const string FILENAME = "data/still_camera_1.mp4";
 const int FRAME_WIDTH = 1920;
 const int FRAME_HEIGHT = 1080;
 const float TRAIL_DURATION = 1.5;
@@ -222,14 +222,15 @@ int main(int argc, char* argv[]) {
                     targetObject = objectTracker.getObject();
                 }
                 else {
+                    // TODO: Used too much
                     // Use the biggest object
                     targetObject = objects.at(objects.size() - 1);
                 }
                 Point targetObjectCenter = OpenCvHelper::calculateRectangleCenter(boundingRect(targetObject));
 
                 int framesElapsedSinceLastDetection = max(stream.get(CAP_PROP_POS_FRAMES) - primaryObjectLastDetectedFrame, (double)1);
-                objectTracker.maxOffsetX = 40 * framesElapsedSinceLastDetection;
-                objectTracker.maxOffsetY = 40 * framesElapsedSinceLastDetection;
+                objectTracker.maxOffsetX = MAXIMUM_OFFSET_X * framesElapsedSinceLastDetection;
+                objectTracker.maxOffsetY = MAXIMUM_OFFSET_Y * framesElapsedSinceLastDetection;
 
                 objectTracker.trackObject(objects, targetObjectCenter);
                 if (objectTracker.getIsObjectDetected()) {

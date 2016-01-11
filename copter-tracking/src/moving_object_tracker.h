@@ -19,7 +19,6 @@ public:
     bool getIsObjectDetected();
 
     MovingObjectTracker();
-    ~MovingObjectTracker();
 
     void trackObject(std::vector<std::vector<cv::Point>> objects, cv::Point lastPosition);
 };
