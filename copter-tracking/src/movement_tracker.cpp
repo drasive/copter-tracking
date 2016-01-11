@@ -14,14 +14,8 @@ using namespace cv;
 // Global consts
 //const string FILENAME = "";
 const string FILENAME = "data/still_camera_2.mp4";
-const int CROP_TOP = 20;
-const int CROP_BOTTOM = 20;
-const int CROP_LEFT = 20;
-const int CROP_RIGHT = 20;
 const int FRAME_WIDTH = 1920;
 const int FRAME_HEIGHT = 1080;
-const int FRAME_WIDTH_CROPPED = FRAME_WIDTH - CROP_LEFT - CROP_RIGHT;
-const int FRAME_HEIGHT_CROPPED = FRAME_HEIGHT - CROP_TOP - CROP_BOTTOM;
 const float TRAIL_DURATION = 1.5;
 
 const string RAW_FRAME_WINDOW_NAME = "Raw Input";
@@ -187,22 +181,10 @@ int main() {
 
             // Get current frame as grayscale
             stream.read(currentFrame);
-            if (CROP_TOP > 0 || CROP_BOTTOM > 0 || CROP_LEFT > 0 || CROP_RIGHT > 0) {
-                Rect croppedArea = Rect(CROP_LEFT, CROP_TOP,
-                    FRAME_WIDTH_CROPPED,
-                    FRAME_HEIGHT_CROPPED);
-                currentFrame = currentFrame(croppedArea);
-            }
             cvtColor(currentFrame, currentFrameGrayscale, COLOR_BGR2GRAY);
 
             // Get next frame as grayscale
             stream.read(nextFrame);
-            if (CROP_TOP > 0 || CROP_BOTTOM > 0 || CROP_LEFT > 0 || CROP_RIGHT > 0) {
-                Rect croppedArea = Rect(CROP_LEFT, CROP_TOP,
-                    FRAME_WIDTH_CROPPED,
-                    FRAME_HEIGHT_CROPPED);
-                nextFrame = nextFrame(croppedArea);
-            }
             cvtColor(nextFrame, nextFrameGrayscale, COLOR_BGR2GRAY);
 
             // Get difference between current and next frame
@@ -261,7 +243,7 @@ int main() {
             // TODO: Reuse second frame as first frame next time
             int waitTime = 2 * 1000 / framerate - frameProcessingDuration;
             if (waitTime <= 0) {
-                OpenCvHelper::drawText(currentFrame, Scalar(0, 0, 255), Point(FRAME_WIDTH_CROPPED / 2, 40),
+                OpenCvHelper::drawText(currentFrame, Scalar(0, 0, 255), Point(FRAME_WIDTH / 2, 40),
                     "PROCESSING DELAY (" + to_string(-waitTime) + "ms)", 2);
                 waitTime = 1;
             }
