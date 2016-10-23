@@ -1,3 +1,4 @@
+#include <chrono>
 #include <opencv2/opencv.hpp>
 #include <opencv2/highgui/highgui.hpp>
 
@@ -5,11 +6,18 @@
 using namespace std;
 using namespace cv;
 
+// Global consts
 //const string FILENAME = "";
-const string FILENAME = "input/video2.mp4";
+const string FILENAME = "input/still_camera_2.mp4";
+const int CROP_TOP = 20;
+const int CROP_BOTTOM = 20;
+const int CROP_LEFT = 20;
+const int CROP_RIGHT = 20;
 const int FRAME_WIDTH = 1920;
 const int FRAME_HEIGHT = 1080;
-const float TRAIL_DURATION = 3.0;
+const int FRAME_WIDTH_CROPPED = FRAME_WIDTH - CROP_LEFT - CROP_RIGHT;
+const int FRAME_HEIGHT_CROPPED = FRAME_HEIGHT - CROP_TOP - CROP_BOTTOM;
+const float TRAIL_DURATION = 1.5;
 
 const string RAW_FRAME_WINDOW_NAME = "Raw Input";
 const string DIFFERENCE_FRAME_WINDOW_NAME = "Raw Difference";
@@ -17,12 +25,19 @@ const string THRESHOLDED_FRAME_WINDOW_NAME = "Thresholded Difference";
 const string BLURRED_FRAME_WINDOW_NAME = "Blurred Difference (Final)";
 const string SETTINGS_WINDOW_NAME = "Settings";
 
-int thresholdSensitivity = 32;
-int blurSize = 20;
+// Settings
 int framerate = 30;
+int thresholdSensitivity = 30;
+int blurSize = 20;
 
-int primaryObjectLastPosition[2] = { 0,0 };
-Rect primaryObjectLastBoundingRectangle = Rect(0, 0, 0, 0);
+// Global variables
+bool debugMode = false;
+VideoCapture stream;
+
+int primaryObjectLastPosition[2] = { -1, -1 };
+Rect primaryObjectLastBoundingRectangle = Rect(-1, -1, -1, -1);
+int primaryObjectLastDetectedFrame = -1;
+vector<Point> trail = vector<Point>();
 
 
 void createNamedWindow(const string &name) {
@@ -56,11 +71,11 @@ void drawCrosshair(Mat &frame, Scalar color, int x, int y) {
         line(frame, Point(x, y), Point(x, 0), color, LINE_THICKNESS, LINE_TYPE);
     }
     // Draw bottom line
-    if (y + LINE_LENGTH < FRAME_HEIGHT) {
+    if (y + LINE_LENGTH < FRAME_HEIGHT_CROPPED) {
         line(frame, Point(x, y), Point(x, y + LINE_LENGTH), color, LINE_THICKNESS, LINE_TYPE);
     }
     else {
-        line(frame, Point(x, y), Point(x, FRAME_HEIGHT), color, LINE_THICKNESS, LINE_TYPE);
+        line(frame, Point(x, y), Point(x, FRAME_HEIGHT_CROPPED), color, LINE_THICKNESS, LINE_TYPE);
     }
 
     // Draw left line
@@ -72,11 +87,11 @@ void drawCrosshair(Mat &frame, Scalar color, int x, int y) {
     }
 
     // Draw right line
-    if (x + LINE_LENGTH < FRAME_WIDTH) {
+    if (x + LINE_LENGTH < FRAME_WIDTH_CROPPED) {
         line(frame, Point(x, y), Point(x + LINE_LENGTH, y), color, LINE_THICKNESS, LINE_TYPE);
     }
     else {
-        line(frame, Point(x, y), Point(FRAME_WIDTH, y), color, LINE_THICKNESS, LINE_TYPE);
+        line(frame, Point(x, y), Point(FRAME_WIDTH_CROPPED, y), color, LINE_THICKNESS, LINE_TYPE);
     }
 }
 
@@ -90,53 +105,156 @@ void drawRectangle(Mat &frame, Scalar color, Rect rectangle) {
     cv::rectangle(frame, topLeft, bottomRight, color, LINE_THICKNESS, LINE_TYPE);
 }
 
-void drawText(Mat &frame, Scalar color, int x, int y, string text) {
+void drawText(Mat &frame, Scalar color, int x, int y, string text, int fontScale = 1) {
     const float TEXT_OFFSET_X_FACTOR = 9.0;
     const int FONT_FACE = 1;
-    const int FONT_SCALE = 1;
+    const int FONT_SCALE_FACTOR = 1;
     const int FONT_THICKNESS = 1;
     const int LINE_TYPE = 8;
 
-    putText(frame, text, Point(x - (text.length() / 2 * TEXT_OFFSET_X_FACTOR), y),
-        FONT_FACE, FONT_SCALE, color, FONT_THICKNESS, LINE_TYPE);
+    fontScale = fontScale * FONT_SCALE_FACTOR;
+    putText(frame, text, Point(x - (text.length() * fontScale / 2 * TEXT_OFFSET_X_FACTOR), y),
+        FONT_FACE, fontScale, color, FONT_THICKNESS, LINE_TYPE);
 }
 
-void drawTrail(Mat &frame, Scalar color, vector<pair<int, int>> points) {
+void drawTrail(Mat &frame, Scalar color) {
     const int MINIMUM_THICKNESS = 1;
-    const int MAXIMUM_THICKNESS = 3;
+    const int MAXIMUM_THICKNESS = 2;
     const int LINE_TYPE = 8;
 
-    for (int pointIndex = 0; pointIndex < points.size() - 2; pointIndex++) {
-        if (points[pointIndex].first == -1 || points[pointIndex + 1].first == -1) {
+    if (trail.size() < 2) {
+        return;
+    }
+
+    for (int pointIndex = 0; pointIndex < trail.size() - 2; pointIndex++) {
+        if (trail[pointIndex].x == -1 || trail[pointIndex + 1].x == -1) {
             break;
         }
 
-        Point startingPoint = Point(points[pointIndex].first, points[pointIndex].second);
-        Point endPoint = Point(points[pointIndex + 1].first, points[pointIndex + 1].second);
-        int thickness = round(MINIMUM_THICKNESS + (MAXIMUM_THICKNESS - MINIMUM_THICKNESS) / (points.size() - 1) * pointIndex); // Linear progression
+        Point startingPoint = Point(trail[pointIndex].x, trail[pointIndex].y);
+        Point endPoint = Point(trail[pointIndex + 1].x, trail[pointIndex + 1].y);
+        float maximumTrailLength = framerate * TRAIL_DURATION;
+        // TODO: Fix when framerate changes (pointIndex seems to be the problem)
+        int thickness = round(MINIMUM_THICKNESS + (MAXIMUM_THICKNESS - MINIMUM_THICKNESS) / (maximumTrailLength) * pointIndex); // Linear progression
 
         line(frame, startingPoint, endPoint, color, thickness, LINE_TYPE);
     }
 }
 
+void addTrailPoint(Point point) {
+    trail.push_back(point);
+
+    int maximumTrailLength = framerate * TRAIL_DURATION;
+    if (trail.size() > maximumTrailLength) {
+        trail.erase(trail.begin(), trail.begin() + 1);
+    }
+}
+
+Point calculateRectangleCenter(Rect rectangle) {
+    return Point(
+        rectangle.x + rectangle.width / 2,
+        rectangle.y + rectangle.height / 2);
+}
+
+float calculatePointDistance(Point point1, Point point2) {
+    int deltaX = point2.x - point1.x;
+    int deltaY = point2.y - point1.y;
+
+    return sqrt(deltaX*deltaX + deltaY*deltaY);
+}
+
+const float MAXIMUM_OFFSET_FACTOR_X = 0.02;
+const float MAXIMUM_OFFSET_FACTOR_Y = 0.02;
+
+bool obeysOffsetLimits(Rect objectBoundingRectangle) {
+    int framesElapsedSinceLastDetection = max(stream.get(CAP_PROP_POS_FRAMES) - primaryObjectLastDetectedFrame, (double)1);
+    int maximumOffsetX = FRAME_WIDTH_CROPPED * MAXIMUM_OFFSET_FACTOR_X * framesElapsedSinceLastDetection;
+    int maximumOffsetY = FRAME_HEIGHT_CROPPED * MAXIMUM_OFFSET_FACTOR_Y * framesElapsedSinceLastDetection;
+
+    auto primaryObjectCenter = calculateRectangleCenter(primaryObjectLastBoundingRectangle);
+    auto objectCenter = calculateRectangleCenter(objectBoundingRectangle);
+    int offsetX = abs(objectCenter.x - primaryObjectCenter.x);
+    int offsetY = abs(objectCenter.y - primaryObjectCenter.y);
+
+    return offsetX <= maximumOffsetX && offsetY <= maximumOffsetY;
+}
+
 vector<Point> identifyPrimaryObject(vector<vector<Point>> contours) {
+    const float MAXMIMUM_OFFSET_LIMIT_DURATION = 1.0;
+
     if (contours.empty()) {
         return vector<Point>();
     }
 
-    //the largest contour is found at the end of the contours vector
-    //we will simply assume that the biggest contour is the object we are looking for.
-    return contours.at(contours.size() - 1);
+    if (primaryObjectLastPosition[0] == -1) {
+        // Just start off with the biggest object
+        return contours.at(contours.size() - 1);
+    }
+    else {
+        // TODO: Filter contours by minimum and maximum area
+        // TODO: Filter contours by minimum and maximum height/width relation
+
+        vector<Point> biggestObject = contours.at(contours.size() - 1);
+        Rect biggestObjectBoundingRectangle = boundingRect(biggestObject);
+
+        if (obeysOffsetLimits(biggestObjectBoundingRectangle)) {
+            // Assume biggest object is primary object
+            return biggestObject;
+        }
+        else {
+            // Assume object nearest to last position of primary object is still primary object
+            cout << "Warning: Assuming primary object is nearest to last position (not largest)" << endl;
+
+            Point primaryObjectLastCenter = calculateRectangleCenter(primaryObjectLastBoundingRectangle);
+            float minimumDistance = UINT32_MAX;
+            vector<Point> nearestObject;
+            for (auto &contour : contours) {
+                Point contourCenter = calculateRectangleCenter(boundingRect(contour));
+
+                if (calculatePointDistance(contourCenter, primaryObjectLastCenter) < minimumDistance) {
+                    minimumDistance = calculatePointDistance(contourCenter, primaryObjectLastCenter);
+                    nearestObject = contour;
+                }
+            }
+
+            // Make sure nearest object doesn't violate maximum offset limits
+            Rect nearestObjectBoundingRectangle = boundingRect(nearestObject);
+            int framesElapsedSinceLastDetection = max(stream.get(CAP_PROP_POS_FRAMES) - primaryObjectLastDetectedFrame, (double)1);
+
+            if (obeysOffsetLimits(nearestObjectBoundingRectangle) || framesElapsedSinceLastDetection > framerate * MAXMIMUM_OFFSET_LIMIT_DURATION) {
+                return nearestObject;
+            }
+
+            return vector<Point>();
+        }
+    }
+}
+
+void drawPrimaryObjectMaximumOffsetLimits(Mat &outputFrame, int x , int y) {
+    int framesElapsedSinceLastDetection = max(stream.get(CAP_PROP_POS_FRAMES) - primaryObjectLastDetectedFrame, (double)1);
+    int maximumOffsetX = FRAME_WIDTH_CROPPED * MAXIMUM_OFFSET_FACTOR_X * framesElapsedSinceLastDetection;
+    int maximumOffsetY = FRAME_HEIGHT_CROPPED * MAXIMUM_OFFSET_FACTOR_Y * framesElapsedSinceLastDetection;
+
+    auto primaryObjectCenter = calculateRectangleCenter(primaryObjectLastBoundingRectangle);
+    auto objectCenter = calculateRectangleCenter(primaryObjectLastBoundingRectangle);
+    int offsetX = abs(objectCenter.x - primaryObjectCenter.x);
+    int offsetY = abs(objectCenter.y - primaryObjectCenter.y);
+
+    drawRectangle(outputFrame, Scalar(0, 0, 0), Rect(x - maximumOffsetX, y - maximumOffsetY, maximumOffsetX * 2, maximumOffsetY * 2));
 }
 
 void trackObjects(Mat frameDifference, Mat &outputFrame) {
+    const bool USE_CONTOUR_DETECTION = true;
     const Scalar PRIMARY_OBJECT_TRACKING_COLOR = Scalar(0, 255, 0);
     const Scalar PRIMARY_OBJECT_LOST_COLOR = Scalar(0, 0, 255);
     const Scalar SECONDARY_OBJECTS_TRACKING_COLOR = Scalar(255, 255, 255);
+    const bool DRAW_PRIMARY_OBJECT_TRAIL = true;
+    const bool DRAW_PRIMARY_OBJECT_OFFSET_LIMITS = true;
     const bool DRAW_SECONDARY_OBJECT_MARKERS = true;
-    const int TEXT_OFFSET_Y = 50;
+    const int TEXT_OFFSET_Y = 40;
 
-    if (true) { // Using contour detection
+    if (USE_CONTOUR_DETECTION) {
+        // Using contour detection
         // TODO: Add and test PROCESSING_RESOLUTION_FACTOR
 
         // Detect contours
@@ -160,14 +278,20 @@ void trackObjects(Mat frameDifference, Mat &outputFrame) {
         // Draw primary object marker
         if (!primaryObject.empty()) {
             primaryObjectLastBoundingRectangle = boundingRect(primaryObject);
+            primaryObjectLastDetectedFrame = stream.get(CAP_PROP_POS_FRAMES);
 
-            primaryObjectLastPosition[0] = primaryObjectLastBoundingRectangle.x + primaryObjectLastBoundingRectangle.width / 2;
-            primaryObjectLastPosition[1] = primaryObjectLastBoundingRectangle.y + primaryObjectLastBoundingRectangle.height / 2;
-            int x = primaryObjectLastPosition[0];
-            int y = primaryObjectLastPosition[1];
+            Point primaryObjectCenter = calculateRectangleCenter(primaryObjectLastBoundingRectangle);
+            int x = primaryObjectLastPosition[0] = primaryObjectCenter.x;
+            int y = primaryObjectLastPosition[1] = primaryObjectCenter.y;
+
+            addTrailPoint(Point(x, y));
 
             drawRectangle(outputFrame, PRIMARY_OBJECT_TRACKING_COLOR, primaryObjectLastBoundingRectangle);
             drawCrosshair(outputFrame, PRIMARY_OBJECT_TRACKING_COLOR, x, y);
+
+            if (DRAW_PRIMARY_OBJECT_OFFSET_LIMITS) {
+                drawPrimaryObjectMaximumOffsetLimits(outputFrame, x , y);
+            }
         }
         else if (primaryObjectLastPosition[0] != -1) {
             int x = primaryObjectLastPosition[0];
@@ -178,8 +302,13 @@ void trackObjects(Mat frameDifference, Mat &outputFrame) {
             drawRectangle(outputFrame, PRIMARY_OBJECT_LOST_COLOR, primaryObjectLastBoundingRectangle);
             drawCrosshair(outputFrame, PRIMARY_OBJECT_LOST_COLOR, x, y);
         }
+
+        if (DRAW_PRIMARY_OBJECT_TRAIL) {
+            drawTrail(outputFrame, PRIMARY_OBJECT_TRACKING_COLOR);
+        }
     }
-    else { // Using blob detection
+    else {
+        // Using blob detection
         const float PROCESSING_RESOLUTION_FACTOR = 0.2;
 
         // Setup blob detection parameters
@@ -188,15 +317,15 @@ void trackObjects(Mat frameDifference, Mat &outputFrame) {
         params.filterByColor = false;
 
         params.filterByArea = true;
-        params.minArea = 25.0f;
-        params.maxArea = 400.0f;
+        params.minArea = 10.0f;
+        params.maxArea = 200.0f;
 
         params.filterByCircularity = true;
-        params.minCircularity = 0.4;
-        params.maxCircularity = 1.0;
+        params.minCircularity = 0.20;
+        params.maxCircularity = 0.70;
 
         params.filterByInertia = true;
-        params.minInertiaRatio = 0.25;
+        params.minInertiaRatio = 0.20;
         params.maxInertiaRatio = 0.75;
 
         params.minDistBetweenBlobs = 20.0f;
@@ -228,10 +357,8 @@ void trackObjects(Mat frameDifference, Mat &outputFrame) {
 
 int main() {
     bool trackingEnabled = true;
-    bool debugMode = false;
     bool pause = false;
 
-    VideoCapture stream;
     Mat currentFrame, nextFrame;
     Mat currentFrameGrayscale, nextFrameGrayscale;
     Mat frameDifference;
@@ -264,15 +391,36 @@ int main() {
             return -1;
         }
 
+        // Reset object tracking
+        primaryObjectLastPosition[0] = -1;
+        primaryObjectLastPosition[1] = -1;
+        primaryObjectLastBoundingRectangle = Rect(-1, -1, -1, -1);
+        primaryObjectLastDetectedFrame = -1;
+        trail = vector<Point>();
+
 
         // Analyze frames
         while (liveStream || stream.get(CV_CAP_PROP_POS_FRAMES) < stream.get(CV_CAP_PROP_FRAME_COUNT) - 1) {
+            chrono::high_resolution_clock::time_point frameProcessingStartTime = chrono::high_resolution_clock::now();
+
             // Get current frame as grayscale
             stream.read(currentFrame);
+            if (CROP_TOP > 0 || CROP_BOTTOM > 0 || CROP_LEFT > 0 || CROP_RIGHT > 0) {
+                Rect croppedArea = Rect(CROP_LEFT, CROP_TOP,
+                    FRAME_WIDTH_CROPPED,
+                    FRAME_HEIGHT_CROPPED);
+                currentFrame = currentFrame(croppedArea);
+            }
             cvtColor(currentFrame, currentFrameGrayscale, COLOR_BGR2GRAY);
 
             // Get next frame as grayscale
             stream.read(nextFrame);
+            if (CROP_TOP > 0 || CROP_BOTTOM > 0 || CROP_LEFT > 0 || CROP_RIGHT > 0) {
+                Rect croppedArea = Rect(CROP_LEFT, CROP_TOP,
+                    FRAME_WIDTH_CROPPED,
+                    FRAME_HEIGHT_CROPPED);
+                nextFrame = nextFrame(croppedArea);
+            }
             cvtColor(nextFrame, nextFrameGrayscale, COLOR_BGR2GRAY);
 
             // Get difference between current and next frame
@@ -296,8 +444,21 @@ int main() {
             }
 
 
+            // Calculate wait time
+            auto frameProcessingDuration = chrono::duration_cast<chrono::milliseconds>(
+                chrono::high_resolution_clock::now() - frameProcessingStartTime).count();
+
+            // TODO: Reuse second frame as first frame next time
+            int waitTime = 2 * 1000 / framerate - frameProcessingDuration;
+            if (waitTime <= 0) {
+                drawText(currentFrame, Scalar(0, 0, 255), FRAME_WIDTH_CROPPED / 2, 40,
+                    "PROCESSING DELAY (" + to_string(-waitTime) + "ms)", 2);
+                waitTime = 1;
+            }
+
             // Display output
             createNamedWindow(RAW_FRAME_WINDOW_NAME);
+            //resizeWindow(name, 1280, 960);
             imshow(RAW_FRAME_WINDOW_NAME, currentFrame);
 
             if (debugMode) {
@@ -315,14 +476,12 @@ int main() {
                 destroyWindow(BLURRED_FRAME_WINDOW_NAME);
             }
 
-
             // Check for user input
             const int EXIT_KEY = 27; // "Esc" key
             const int TOGGLE_TRACKING_KEY = 't';
             const int TOGGLE_DEBUG_MODE_KEY = 'd';
             const int TOGGLE_PAUSE_KEY = 'p';
 
-            int waitTime = 1000 / framerate;
             switch (waitKey(waitTime)) {
             case EXIT_KEY:
                 return 0;
